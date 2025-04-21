@@ -62,17 +62,39 @@ export default function ShoppingAssistant() {
         };
         setMessages((prev: Message[]) => {
           const updated = [...prev, assistantMsg];
-          // Also update the conversation and localStorage here
           if (currentConversationId) {
             setConversations((prevConvs) => {
-              const updatedConvs = prevConvs.map((conv) =>
-                conv.id === currentConversationId
-                  ? { ...conv, messages: updated }
-                  : conv
-              );
+              const updatedConvs = prevConvs.map((conv) => {
+                if (conv.id === currentConversationId) {
+                  // Save products/categories with the conversation for this message
+                  let displayType = conv.displayType;
+                  let displayData = conv.displayData;
+                  if (data.products) {
+                    displayType = "products";
+                    displayData = data.products;
+                  } else if (data.categories) {
+                    displayType = "categories";
+                    displayData = data.categories;
+                  }
+                  return { ...conv, messages: updated, displayType, displayData };
+                }
+                return conv;
+              });
               localStorage.setItem("shoppingConversations", JSON.stringify(updatedConvs));
               return updatedConvs;
             });
+          }
+          // Set product/category display for the UI
+          if (data.products) {
+            setSearchResults(data.products);
+            setShowProducts(true);
+            setShowCategories(false);
+            setShowComparison(false);
+          } else if (data.categories) {
+            setSearchResults(data.categories);
+            setShowProducts(false);
+            setShowCategories(true);
+            setShowComparison(false);
           }
           return updated;
         });
