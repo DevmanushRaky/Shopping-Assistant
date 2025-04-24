@@ -1,6 +1,7 @@
 import type { Message } from "ai"
 import { cn } from "@/lib/utils"
 import { User, Bot } from "lucide-react"
+import ReactMarkdown from "react-markdown"
 
 interface ShoppingMessageProps {
   message: Message
@@ -27,7 +28,13 @@ export function ShoppingMessage({ message }: ShoppingMessageProps) {
         </div>
         <div className="flex-1 space-y-2">
           <div className="font-medium">{message.role === "user" ? "You" : "Shopping Assistant"}</div>
-          <div className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</div>
+          <div className="text-sm leading-relaxed whitespace-pre-wrap">
+            {message.role === "assistant" ? (
+              <ReactMarkdown>{message.content}</ReactMarkdown>
+            ) : (
+              message.content
+            )}
+          </div>
         </div>
       </div>
     </div>

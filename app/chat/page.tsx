@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Mic, MicOff, Send, Plus, ShoppingBag } from "lucide-react"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
 import { cn } from "@/lib/utils"
-import { sampleConversations } from "@/lib/sample-data"
+import { supabase } from "@/lib/supabaseClient"
 import Link from "next/link"
 import type { Message } from "ai"
 
@@ -21,9 +21,9 @@ type Conversation = {
   id: string
   title: string
   messages: Message[]
-  createdAt: Date
-  displayType?: string
-  displayData?: any
+  created_at: string
+  display_type?: string
+  display_data?: any
 }
 
 // Add TypeScript declaration for SpeechRecognition
@@ -45,80 +45,32 @@ export default function ShoppingAssistant() {
   const [isRecording, setIsRecording] = useState(false)
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const messageContainerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [messages, setMessages] = useState<Message[]>([])
 
-  const { messages, input, handleInputChange, handleSubmit, isLoading, setMessages } = useChat({
-    api: "/api/chat",
-    onResponse: async (response) => {
-      // Parse the response as JSON
-      const data = await response.json();
-      console.log("Assistant response data:", data);
-
-      // Add the assistant's message to the chat
-      if (data && data.content) {
-        const assistantMsg: Message = {
-          id: data.id || Date.now().toString(),
-          role: "assistant",
-          content: data.content,
-        };
-        setMessages((prev: Message[]) => {
-          const updated = [...prev, assistantMsg];
-          if (currentConversationId) {
-            setConversations((prevConvs) => {
-              const updatedConvs = prevConvs.map((conv) => {
-                if (conv.id === currentConversationId) {
-                  // Save products/categories with the conversation for this message
-                  let displayType = conv.displayType;
-                  let displayData = conv.displayData;
-                  if (data.products) {
-                    displayType = "products";
-                    displayData = data.products;
-                  } else if (data.categories) {
-                    displayType = "categories";
-                    displayData = data.categories;
-                  }
-                  return { ...conv, messages: updated, displayType, displayData };
-                }
-                return conv;
-              });
-              localStorage.setItem("shoppingConversations", JSON.stringify(updatedConvs));
-              return updatedConvs;
-            });
-          }
-          // Set product/category display for the UI
-          if (data.products) {
-            setSearchResults(data.products);
-            setShowProducts(true);
-            setShowCategories(false);
-            setShowComparison(false);
-          } else if (data.categories) {
-            setSearchResults(data.categories);
-            setShowProducts(false);
-            setShowCategories(true);
-            setShowComparison(false);
-          }
-          return updated;
-        });
+  // Fetch conversations from Supabase on mount
+  useEffect(() => {
+    const fetchConversations = async () => {
+      const { data, error } = await supabase
+        .from('conversations')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (error) {
+        console.error('Error fetching conversations:', error)
+        return
       }
-      // If there are products, display them
-      if (data.products) {
-        setSearchResults(data.products);
-        setShowProducts(true);
-        setShowCategories(false);
-        setShowComparison(false);
+      setConversations(data || [])
+      if (data && data.length > 0) {
+        setCurrentConversationId(data[0].id)
+        setMessages(data[0].messages || [])
+        setShowProducts(data[0].display_type === "products")
+        setShowCategories(data[0].display_type === "categories")
+        setShowComparison(data[0].display_type === "comparison")
+        setSearchResults(data[0].display_data || [])
       }
-      // If there are categories, display them (if you have a CategoryDisplay component)
-      if (data.categories) {
-        setSearchResults(data.categories);
-        setShowProducts(false);
-        setShowCategories(true);
-        setShowComparison(false);
-      }
-    },
-    onFinish: (message) => {
-      // Save conversation after each message
-      saveCurrentConversation()
-    },
-  })
+    }
+    fetchConversations()
+  }, [])
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -127,136 +79,188 @@ export default function ShoppingAssistant() {
     }
   }, [messages])
 
-  // Load conversations from localStorage on mount
-  useEffect(() => {
-    const stored = localStorage.getItem("shoppingConversations")
-    if (stored) {
-      const parsed: Conversation[] = JSON.parse(stored)
-      setConversations(parsed)
-      if (parsed.length > 0) setCurrentConversationId(parsed[0].id)
-    }
-  }, [])
-
-  const fetchMockProducts = () => {
-    // This is a mock function - in a real app, you would fetch from your product API
-    const mockProducts = [
-      {
-        id: 1,
-        name: "Wireless Headphones",
-        price: 129.99,
-        image: "/diverse-music-lovers.png",
-        description: "Premium noise-cancelling wireless headphones",
-      },
-      {
-        id: 2,
-        name: "Smart Watch",
-        price: 249.99,
-        image: "/modern-smartwatch-display.png",
-        description: "Fitness and health tracking smartwatch",
-      },
-      {
-        id: 3,
-        name: "Bluetooth Speaker",
-        price: 79.99,
-        image: "/audio-system.png",
-        description: "Portable waterproof bluetooth speaker",
-      },
-      {
-        id: 4,
-        name: "Laptop Backpack",
-        price: 59.99,
-        image: "/colorful-travel-backpack.png",
-        description: "Durable laptop backpack with USB charging port",
-      },
-    ]
-
-    setSearchResults(mockProducts)
-    setShowProducts(true)
-    setShowCategories(false)
-    setShowComparison(false)
-  }
-
-  const handleFormSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    if (input.trim()) {
-      console.log("User message:", input)
-      let convId = currentConversationId
-      if (!convId) {
-        convId = createNewConversation()
+  // Chat logic
+  const { input, handleInputChange, handleSubmit, isLoading } = useChat({
+    api: "/api/chat",
+    onResponse: async (response) => {
+      const data = await response.json();
+      if (data && data.content) {
+        const assistantMsg: Message = {
+          id: data.id || Date.now().toString(),
+          role: "assistant",
+          content: data.content,
+        };
+        setMessages((prev: Message[]) => {
+          const updated = [...prev, assistantMsg];
+          updateCurrentConversation({ messages: updated, display_type: getDisplayType(data), display_data: getDisplayData(data) })
+          if (currentConversationId) {
+            updateTitleFromGemini(updated, currentConversationId)
+          }
+          if (data.products) {
+            setSearchResults(data.products)
+            setShowProducts(true)
+            setShowCategories(false)
+            setShowComparison(false)
+          } else if (data.categories) {
+            setSearchResults(data.categories)
+            setShowProducts(false)
+            setShowCategories(true)
+            setShowComparison(false)
+          } else {
+            setShowProducts(false)
+            setShowCategories(false)
+            setShowComparison(false)
+            setSearchResults([])
+          }
+          return updated
+        })
       }
-      setCurrentConversationId(convId);
-      // Only call handleSubmit, do not manually add the user message
-      handleSubmit(e)
-    }
+      setTimeout(() => {
+        inputRef.current?.focus()
+      }, 0)
+    },
+    onFinish: () => {
+      // No-op, handled in onResponse
+    },
+  })
+
+  // Helper to get display type/data from LLM response
+  function getDisplayType(data: any) {
+    if (data.products) return "products"
+    if (data.categories) return "categories"
+    if (data.comparison) return "comparison"
+    return null
+  }
+  function getDisplayData(data: any) {
+    if (data.products) return data.products
+    if (data.categories) return data.categories
+    if (data.comparison) return data.comparison
+    return null
   }
 
-  const createNewConversation = () => {
-    const newId = Date.now().toString()
-    const newConversation: Conversation = {
-      id: newId,
-      title: "New Chat",
-      messages: [],
-      createdAt: new Date(),
+  // Create a new conversation in Supabase
+  const createNewConversation = async () => {
+    const { data, error } = await supabase
+      .from('conversations')
+      .insert([
+        {
+          title: 'New Chat',
+          messages: [],
+          display_type: null,
+          display_data: null,
+        },
+      ])
+      .select()
+      .single()
+    if (error) {
+      console.error('Error creating conversation:', error)
+      return
     }
-    const updated = [newConversation, ...conversations]
-    setConversations(updated)
-    setCurrentConversationId(newId)
+    const newConversation = data
+    setConversations([newConversation, ...conversations])
+    setCurrentConversationId(newConversation.id)
     setMessages([])
     setShowProducts(false)
     setShowCategories(false)
     setShowComparison(false)
-    localStorage.setItem("shoppingConversations", JSON.stringify(updated))
-    return newId
+    setSearchResults([])
+    return newConversation.id
   }
 
-  const saveCurrentConversation = () => {
+  // Update the current conversation in Supabase
+  const updateCurrentConversation = async (opts: { messages?: Message[], display_type?: string | null, display_data?: any }) => {
     if (!currentConversationId) return
-    const updatedConversations = conversations.map((conv) => {
-      if (conv.id === currentConversationId) {
-        // Use the first user message as the title
-        const firstUserMessage = conv.messages.find((m) => m.role === "user")
-        let title = "New Chat"
-        if (firstUserMessage) {
-          title = firstUserMessage.content.substring(0, 30) + (firstUserMessage.content.length > 30 ? "..." : "")
-        }
-        return {
-          ...conv,
-          messages: [...messages],
-          title,
-        }
-      }
-      return conv
-    })
-    setConversations(updatedConversations)
-    localStorage.setItem("shoppingConversations", JSON.stringify(updatedConversations))
+    const conv = conversations.find((c) => c.id === currentConversationId)
+    if (!conv) return
+    const firstUserMessage = (opts.messages || conv.messages).find((m) => m.role === "user")
+    let title = conv.title
+    if (firstUserMessage && title === "New Chat") {
+      title = firstUserMessage.content.substring(0, 30) + (firstUserMessage.content.length > 30 ? "..." : "")
+    }
+    const { error } = await supabase
+      .from('conversations')
+      .update({
+        messages: opts.messages || conv.messages,
+        title,
+        display_type: opts.display_type ?? conv.display_type,
+        display_data: opts.display_data ?? conv.display_data,
+      })
+      .eq('id', currentConversationId)
+    if (error) {
+      console.error('Error updating conversation:', error)
+    }
+    // Update local state for UI
+    setConversations(conversations.map((c) =>
+      c.id === currentConversationId
+        ? { ...c, messages: opts.messages || c.messages, title, display_type: opts.display_type ?? c.display_type, display_data: opts.display_data ?? c.display_data }
+        : c
+    ))
   }
 
+  // Load a conversation from Supabase
   const loadConversation = (id: string) => {
     const conversation = conversations.find((c) => c.id === id)
     if (conversation) {
       setCurrentConversationId(id)
       setMessages(conversation.messages as Message[])
-      setShowProducts(conversation.displayType === "products")
-      setShowCategories(conversation.displayType === "categories")
-      setShowComparison(conversation.displayType === "comparison")
-      if (conversation.displayData) {
-        setSearchResults(conversation.displayData)
-      } else {
-        setSearchResults([])
-      }
+      setShowProducts(conversation.display_type === "products")
+      setShowCategories(conversation.display_type === "categories")
+      setShowComparison(conversation.display_type === "comparison")
+      setSearchResults(conversation.display_data || [])
     }
   }
 
-  const onDeleteConversation = (id: string) => {
+  // Delete a conversation from Supabase
+  const onDeleteConversation = async (id: string) => {
+    const { error } = await supabase
+      .from('conversations')
+      .delete()
+      .eq('id', id)
+    if (error) {
+      console.error('Error deleting conversation:', error)
+      return
+    }
     const updated = conversations.filter((c) => c.id !== id)
     setConversations(updated)
     if (currentConversationId === id) {
       setCurrentConversationId(updated[0]?.id || null)
       setMessages(updated[0]?.messages || [])
+      setShowProducts(false)
+      setShowCategories(false)
+      setShowComparison(false)
+      setSearchResults([])
     }
-    localStorage.setItem("shoppingConversations", JSON.stringify(updated))
   }
 
+  // Handle chat form submit
+  const handleFormSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (input.trim()) {
+      let convId = currentConversationId
+      if (!convId) {
+        convId = await createNewConversation()
+      }
+      setCurrentConversationId(convId)
+      // Add user message
+      const userMsg: Message = {
+        id: Date.now().toString(),
+        role: "user",
+        content: input,
+      }
+      const updatedMessages = [...messages, userMsg]
+      setMessages(updatedMessages)
+      updateCurrentConversation({ messages: updatedMessages })
+      if (typeof convId === 'string') {
+        updateTitleFromGemini(updatedMessages, convId)
+      }
+      handleSubmit(e)
+      setTimeout(() => {
+        inputRef.current?.focus()
+      }, 0)
+    }
+  }
+
+  // Voice recording logic (unchanged)
   const toggleRecording = () => {
     if (!isRecording) {
       startRecording()
@@ -264,38 +268,28 @@ export default function ShoppingAssistant() {
       stopRecording()
     }
   }
-
   const startRecording = () => {
     setIsRecording(true)
-
-    // Check if browser supports SpeechRecognition
     if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
       const recognition = new SpeechRecognition()
-
       recognition.continuous = true
       recognition.interimResults = true
       recognition.lang = "en-US"
-
       recognition.onresult = (event: any) => {
         const transcript = Array.from(event.results)
           .map((result: any) => result[0])
           .map((result: any) => result.transcript)
           .join("")
-
         handleInputChange({ target: { value: transcript } } as React.ChangeEvent<HTMLInputElement>)
       }
-
       recognition.onerror = (event: any) => {
         console.error("Speech recognition error", event.error)
         setIsRecording(false)
       }
-
       recognition.onend = () => {
         setIsRecording(false)
       }
-
-      // Store the recognition instance to stop it later
       window.speechRecognition = recognition
       recognition.start()
     } else {
@@ -303,7 +297,6 @@ export default function ShoppingAssistant() {
       setIsRecording(false)
     }
   }
-
   const stopRecording = () => {
     setIsRecording(false)
     if (window.speechRecognition) {
@@ -311,22 +304,46 @@ export default function ShoppingAssistant() {
     }
   }
 
-  // Update conversation title after first user message is added
-  useEffect(() => {
-    if (!currentConversationId) return
-    const conv = conversations.find((c) => c.id === currentConversationId)
-    if (!conv) return
-    const firstUserMessage = messages.find((m) => m.role === "user")
-    if (firstUserMessage && conv.title === "New Chat") {
-      const newTitle = firstUserMessage.content.substring(0, 30) + (firstUserMessage.content.length > 30 ? "..." : "")
-      const updatedConvs = conversations.map((c) =>
-        c.id === currentConversationId ? { ...c, title: newTitle } : c
-      )
-      setConversations(updatedConvs)
-      localStorage.setItem("shoppingConversations", JSON.stringify(updatedConvs))
+  // Add this function to update the title after each message
+  async function updateTitleFromGemini(messages: Message[], conversationId: string) {
+    if (!conversationId || messages.length === 0) return
+    try {
+      const res = await fetch("/api/generate-title", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages }),
+      })
+      const data = await res.json()
+      const newTitle = data.title?.trim() || "Chat"
+      const conv = conversations.find(c => c.id === conversationId)
+      if (conv && conv.title !== newTitle) {
+        await supabase
+          .from('conversations')
+          .update({ title: newTitle })
+          .eq('id', conversationId)
+        setConversations(conversations =>
+          conversations.map(c =>
+            c.id === conversationId ? { ...c, title: newTitle } : c
+          )
+        )
+      }
+    } catch (e) {
+      // fail silently
+      console.log("Error updating title from Gemini", e)
     }
-  }, [messages, currentConversationId])
+  }
 
+  // Add this useEffect for periodic title update every 2 minutes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (currentConversationId && messages.length > 0) {
+        updateTitleFromGemini(messages, currentConversationId)
+      }
+    }, 120000) // 2 minutes
+    return () => clearInterval(interval)
+  }, [currentConversationId, messages])
+
+  // UI rendering (unchanged except for state sources)
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
       {/* Header for mobile */}
@@ -340,7 +357,6 @@ export default function ShoppingAssistant() {
           </Link>
         </div>
       </div>
-
       {/* Sidebar */}
       <ConversationSidebar
         conversations={conversations}
@@ -351,10 +367,8 @@ export default function ShoppingAssistant() {
         onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
         onDeleteConversation={onDeleteConversation}
       />
-
       {/* Main Content */}
-      <div
-        className={cn("flex flex-col flex-1 h-full transition-all duration-300", isSidebarOpen ? "md:ml-64" : "ml-0")}
+      <div className={cn("flex flex-col flex-1 h-full transition-all duration-300", isSidebarOpen ? "md:ml-64" : "ml-0")}
       >
         {/* Desktop header with link to products */}
         <div className="hidden md:flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
@@ -366,7 +380,6 @@ export default function ShoppingAssistant() {
             </Button>
           </Link>
         </div>
-
         <main className="flex flex-col flex-1 h-full max-w-4xl mx-auto w-full">
           {/* Messages Container */}
           <div ref={messageContainerRef} className="flex-1 overflow-y-auto p-4 space-y-6 mt-16 md:mt-0">
@@ -394,7 +407,6 @@ export default function ShoppingAssistant() {
               </>
             )}
           </div>
-
           {/* Input Area */}
           <div className="border-t border-gray-200 dark:border-gray-800 p-4">
             <form onSubmit={handleFormSubmit} className="flex items-center gap-2 max-w-3xl mx-auto">
@@ -409,6 +421,7 @@ export default function ShoppingAssistant() {
               </Button>
               <div className="relative flex-1">
                 <Input
+                  ref={inputRef}
                   value={input}
                   onChange={handleInputChange}
                   placeholder="Message the shopping assistant..."

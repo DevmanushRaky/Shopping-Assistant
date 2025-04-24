@@ -10,8 +10,9 @@ type Conversation = {
   id: string
   title: string
   messages: any[]
-  createdAt: Date
-  displayType?: string
+  created_at?: string
+  display_type?: string
+  display_data?: any
 }
 
 interface ConversationSidebarProps {
@@ -83,9 +84,9 @@ export function ConversationSidebar({
                       onClick={() => onSelectConversation(conversation.id)}
                     >
                       <div className="flex items-center w-full">
-                        <div className="mr-2 flex-shrink-0">{getConversationIcon(conversation.displayType)}</div>
+                        <div className="mr-2 flex-shrink-0">{getConversationIcon(conversation.display_type)}</div>
                         {isOpen && (
-                          <span className="truncate text-xs font-medium max-w-[90px]">{conversation.title}</span>
+                          <span className="truncate text-xs font-medium max-w-[150px]">{conversation.title}</span>
                         )}
                       </div>
                     </Button>

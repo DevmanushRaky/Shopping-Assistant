@@ -116,7 +116,7 @@ export default function ProductsPage() {
           </div>
 
           <div className="flex items-center space-x-4">
-            <Link href="/">
+            <Link href="/chat">
               <Button variant="ghost" size="icon" title="Chat Assistant">
                 <MessageSquare className="h-5 w-5" />
               </Button>
